@@ -1,0 +1,19 @@
+{
+    "name": "luminee/tracing",
+    "description": "Trace request with drivers.",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "LuminEe",
+            "email": "1123462990@qq.com"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "Luminee\\Tracing\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "require": {}
+}
