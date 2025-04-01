@@ -4,10 +4,15 @@ namespace Luminee\Tracing;
 
 use Closure;
 use ErrorException;
+use Exception;
 use Illuminate\Config\Repository;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Support\Facades\DB;
 use Luminee\Tracing\DataCollectors\_DataCollector;
+use Luminee\Tracing\DataCollectors\DBDataCollector;
 use Luminee\Tracing\DataCollectors\TimeDataCollector;
+use Luminee\Tracing\Enums\CollectorEnum;
 use Luminee\Tracing\Exceptions\CollectorException;
 use Luminee\Tracing\Exceptions\MeasureException;
 use Luminee\Tracing\Supports\App;
@@ -98,6 +103,8 @@ class LaravelTracing extends Tracing
 
         $this->addTimeCollector();
 
+        $this->addQueryCollector();
+
         $this->booted = true;
     }
 
@@ -145,12 +152,16 @@ class LaravelTracing extends Tracing
      */
     protected function addTimeCollector()
     {
-        if (!$this->shouldCollect('time', true)) {
+        if (!$this->shouldCollect(CollectorEnum::TIME, true)) {
             return;
         }
 
         $startTime = $this->app['request']->server('REQUEST_TIME_FLOAT');
-        $this->addCollector(new TimeDataCollector($startTime, $this->getCurrentRequestId()));
+        $this->addCollector(new TimeDataCollector(
+            $startTime,
+            $this->getCurrentRequestId(),
+            $this->app['config']->get('tracing.options.time.memory_usage')
+        ));
 
         if ($startTime) {
             $this->app->booted(
@@ -163,6 +174,37 @@ class LaravelTracing extends Tracing
         $this->startMeasure('Application');
     }
 
+    protected function addQueryCollector()
+    {
+        if (!$this->shouldCollect('db', true) || !$this->events) {
+            return;
+        }
+
+        if ($this->hasCollector(CollectorEnum::TIME) &&
+            $this->config->get('tracing.options.db.timeline', false)) {
+            $timeCollector = $this->collectors[CollectorEnum::TIME];
+        } else {
+            $timeCollector = null;
+        }
+
+        $this->addCollector(new DBDataCollector($timeCollector));
+
+        try {
+            $this->events->listen(QueryExecuted::class,
+                function (QueryExecuted $query) {
+                    if (!app(static::class)->shouldCollect('db', true)) {
+                        return; // Issue 776 : We've turned off collecting after the listener was attached
+                    }
+
+                    $this[CollectorEnum::DB]->addQuery($query);
+                }
+            );
+        } catch (Exception $e) {
+            dd($e->getMessage());
+//            $this->addCollectorException('Cannot listen to Queries', $e);
+        }
+    }
+
     /**
      * Handle silenced errors
      *
@@ -173,8 +215,14 @@ class LaravelTracing extends Tracing
      * @param array $context
      * @throws ErrorException
      */
-    public function handleError($level, $message, string $file = '', int $line = 0, array $context = [])
-    {
+    public
+    function handleError(
+        $level,
+        $message,
+        string $file = '',
+        int $line = 0,
+        array $context = []
+    ) {
         $exception = new ErrorException($message, 0, $level, $file, $line);
         if (error_reporting() & $level) {
             throw $exception;
@@ -190,11 +238,15 @@ class LaravelTracing extends Tracing
      * @return string|null
      * @throws CollectorException
      */
-    public function startMeasure(string $label = null, string $parent_uuid = null, string $collector = null)
-    {
-        if ($this->hasCollector('time')) {
+    public
+    function startMeasure(
+        string $label = null,
+        string $parent_uuid = null,
+        string $collector = null
+    ) {
+        if ($this->hasCollector(CollectorEnum::TIME)) {
             /** @var TimeDataCollector $time */
-            $time = $this->getCollector('time');
+            $time = $this->getCollector(CollectorEnum::TIME);
 
             $uuid = $time->startMeasure($label, null, $parent_uuid, $collector);
         }
@@ -210,11 +262,15 @@ class LaravelTracing extends Tracing
      * @throws CollectorException
      * @throws MeasureException
      */
-    public function stopMeasure(string $uuid, $end = null, array $params = array())
-    {
-        if ($this->hasCollector('time')) {
+    public
+    function stopMeasure(
+        string $uuid,
+        $end = null,
+        array $params = array()
+    ) {
+        if ($this->hasCollector(CollectorEnum::TIME)) {
             /** @var TimeDataCollector $time */
-            $time = $this->getCollector('time');
+            $time = $this->getCollector(CollectorEnum::TIME);
 
             $time->stopMeasure($uuid, $end ?? microtime(true), $params);
         }
@@ -224,11 +280,12 @@ class LaravelTracing extends Tracing
      * Get the current measure uuid
      * @throws CollectorException
      */
-    public function getCurrentMeasureUuid()
+    public
+    function getCurrentMeasureUuid()
     {
-        if ($this->hasCollector('time')) {
+        if ($this->hasCollector(CollectorEnum::TIME)) {
             /** @var TimeDataCollector $time */
-            $time = $this->getCollector('time');
+            $time = $this->getCollector(CollectorEnum::TIME);
             return $time->getCurrentMeasureUuid();
         }
 
@@ -240,7 +297,8 @@ class LaravelTracing extends Tracing
      * Check if the Tracing is enabled
      * @return boolean
      */
-    public function isEnabled(): bool
+    public
+    function isEnabled(): bool
     {
         if ($this->enabled === null) {
             /** @var Repository $config */
@@ -260,7 +318,8 @@ class LaravelTracing extends Tracing
     }
 
 
-    protected function getRequestVariables(): array
+    protected
+    function getRequestVariables(): array
     {
         return [
             'method' => $this->request->getMethod(),
@@ -273,7 +332,8 @@ class LaravelTracing extends Tracing
     /**
      * Disable the Tracing
      */
-    public function disable()
+    public
+    function disable()
     {
         $this->enabled = false;
     }
@@ -290,7 +350,8 @@ class LaravelTracing extends Tracing
      * @throws CollectorException
      * @throws MeasureException
      */
-    public function addMeasure(
+    public
+    function addMeasure(
         string $label,
         float $start,
         float $end = null,
@@ -298,9 +359,9 @@ class LaravelTracing extends Tracing
         array $params = [],
         string $collector = null
     ) {
-        if ($this->hasCollector('time')) {
+        if ($this->hasCollector(CollectorEnum::TIME)) {
             /** @var TimeDataCollector $time */
-            $time = $this->getCollector('time');
+            $time = $this->getCollector(CollectorEnum::TIME);
 
             $time->addMeasure($label, $start, $end, $parent_uuid, $params, $collector);
         }
@@ -317,11 +378,16 @@ class LaravelTracing extends Tracing
      * @throws CollectorException
      * @throws MeasureException
      */
-    public function measure(string $label, Closure $closure, string $parent_uuid = null, string $collector = null)
-    {
-        if ($this->hasCollector('time')) {
+    public
+    function measure(
+        string $label,
+        Closure $closure,
+        string $parent_uuid = null,
+        string $collector = null
+    ) {
+        if ($this->hasCollector(CollectorEnum::TIME)) {
             /** @var TimeDataCollector $time */
-            $time = $this->getCollector('time');
+            $time = $this->getCollector(CollectorEnum::TIME);
             $result = $time->measure($label, $closure, $parent_uuid, $collector);
         } else {
             $result = $closure();
@@ -333,8 +399,11 @@ class LaravelTracing extends Tracing
     /**
      * @throws MeasureException
      */
-    public function toView(Request $request, Response $response): Response
-    {
+    public
+    function toView(
+        Request $request,
+        Response $response
+    ): Response {
         if (!$this->isEnabled() || !$this->booted) {
             return $response;
         }

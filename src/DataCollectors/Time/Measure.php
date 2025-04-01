@@ -2,9 +2,10 @@
 
 namespace Luminee\Tracing\DataCollectors\Time;
 
+use Luminee\Tracing\DataCollectors\_DataEntity;
 use Luminee\Tracing\DataFormatters\DataFormatter;
 
-class Measure
+class Measure extends _DataEntity
 {
     use DataFormatter;
 
@@ -31,17 +32,7 @@ class Measure
     /**
      * @var float
      */
-    protected $relative_start;
-
-    /**
-     * @var float
-     */
     protected $end;
-
-    /**
-     * @var float
-     */
-    protected $relative_end;
 
     /**
      * @var float
@@ -49,9 +40,9 @@ class Measure
     protected $duration;
 
     /**
-     * @var string
+     * @var Memory
      */
-    protected $duration_str;
+    protected $memory;
 
     /**
      * @var array
@@ -73,6 +64,7 @@ class Measure
      * @param string|null $label
      * @param float $start
      * @param string|null $parent_uuid
+     * @param bool $memoryUsage
      * @param string|null $collector
      * @param string|null $group
      */
@@ -81,6 +73,7 @@ class Measure
         string $label,
         float $start,
         string $parent_uuid = null,
+        bool $memoryUsage = false,
         string $collector = null,
         string $group = null
     ) {
@@ -90,6 +83,10 @@ class Measure
         $this->parent_uuid = $parent_uuid;
         $this->collector = $collector;
         $this->group = $group;
+
+        if ($memoryUsage) {
+            $this->memory = new Memory();
+        }
     }
 
     /**
@@ -99,12 +96,13 @@ class Measure
      */
     public function endMeasure(float $end, array $params = array())
     {
-        $this->relative_start = $this->start - ($params['requestStartTime'] ?: 0);
         $this->end = $end;
-        $this->relative_end = $end - ($params['requestEndTime'] ?: 0);
         $this->duration = $end - $this->start;
-        $this->duration_str = $this->formatDuration($this->duration);
         $this->params = $params;
+
+        if (!is_null($this->memory)) {
+            $this->memory->memoryUsage();
+        }
     }
 
     public function getUuid(): string
@@ -129,11 +127,12 @@ class Measure
             'parent_uuid' => $this->parent_uuid,
             'label' => $this->label,
             'start' => $this->start,
-            'relative_start' => $this->relative_start,
+            'relative_start' => $this->start - ($this->params['requestStartTime'] ?: 0),
             'end' => $this->end,
-            'relative_end' => $this->relative_end,
+            'relative_end' => $this->end - ($this->params['requestEndTime'] ?: 0),
             'duration' => $this->duration,
-            'duration_str' => $this->duration_str,
+            'duration_str' => $this->formatDuration($this->duration),
+            'memory' => $this->memory ? $this->memory->getData() : [],
             'params' => $this->params,
             'collector' => $this->collector,
             'group' => $this->group

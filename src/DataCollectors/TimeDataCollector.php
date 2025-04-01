@@ -4,7 +4,9 @@ namespace Luminee\Tracing\DataCollectors;
 
 use Closure;
 use Luminee\Tracing\DataCollectors\Time\Measure;
+use Luminee\Tracing\DataCollectors\Time\Memory;
 use Luminee\Tracing\DataFormatters\DataFormatter;
+use Luminee\Tracing\Enums\CollectorEnum;
 use Luminee\Tracing\Exceptions\MeasureException;
 
 /**
@@ -18,7 +20,17 @@ class TimeDataCollector extends _DataCollector
     /**
      * @var string
      */
-    protected $name = 'time';
+    protected $name = CollectorEnum::TIME;
+
+    /**
+     * @var bool
+     */
+    protected $memoryUsage = false;
+
+    /**
+     * @var Memory
+     */
+    protected $memory;
 
     /**
      * @var float
@@ -52,8 +64,10 @@ class TimeDataCollector extends _DataCollector
 
     /**
      * @param float|null $requestStartTime
+     * @param string|null $requestId
+     * @param bool $memoryUsage
      */
-    public function __construct(float $requestStartTime = null, string $requestId = null)
+    public function __construct(float $requestStartTime = null, string $requestId = null, bool $memoryUsage = false)
     {
         if ($requestStartTime === null) {
             $requestStartTime = $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true);
@@ -61,6 +75,11 @@ class TimeDataCollector extends _DataCollector
 
         $this->requestStartTime = (float)$requestStartTime;
         $this->rootMeasureUuid = $requestId;
+        $this->memoryUsage = $memoryUsage;
+
+        if ($this->memoryUsage) {
+            $this->memory = new Memory();
+        }
     }
 
     /**
@@ -88,6 +107,7 @@ class TimeDataCollector extends _DataCollector
             $label,
             $start ?? microtime(true),
             $parent_uuid ?? $this->rootMeasureUuid,
+            $this->memoryUsage,
             $collector,
             $group
         );
@@ -140,9 +160,10 @@ class TimeDataCollector extends _DataCollector
         $end = null,
         string $parent_uuid = null,
         $params = array(),
-        $collector = null
+        $collector = null,
+        $group = null
     ) {
-        $uuid = $this->startMeasure($label, $start, $parent_uuid, $collector);
+        $uuid = $this->startMeasure($label, $start, $parent_uuid, $collector, $group);
         $this->stopMeasure($uuid, $end, $params);
     }
 
@@ -226,6 +247,10 @@ class TimeDataCollector extends _DataCollector
         $this->requestEndTime = microtime(true);
         $duration = $this->getRequestDuration();
 
+        if (!is_null($this->memory)) {
+            $this->memory->memoryUsage();
+        }
+
         foreach (array_keys($this->startedMeasures) as $uuid) {
             $this->stopMeasure($uuid);
         }
@@ -250,6 +275,7 @@ class TimeDataCollector extends _DataCollector
             'end' => $this->requestEndTime,
             'duration' => $duration,
             'duration_str' => $this->formatDuration($duration),
+            'memory' => is_null($this->memory) ? [] : $this->memory->getData(),
             'measures' => $measures,
             'measures_tree' => $measures_tree,
         ];

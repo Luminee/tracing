@@ -2,6 +2,7 @@
 
 namespace Luminee\Tracing\Views\Drivers;
 
+use Luminee\Tracing\Enums\CollectorEnum;
 use Luminee\Tracing\Views\View;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -92,6 +93,7 @@ class Zipkin extends View
                 'end' => $time['end'],
                 'duration' => $time['duration'],
                 'duration_str' => $time['duration_str'],
+                'memory' => $time['memory'],
                 'children' => $time['measures_tree'],
             ]
         ]);
@@ -104,6 +106,16 @@ class Zipkin extends View
         foreach ($measures as $measure) {
             $span = is_null($parentId) ? $tracer->newTrace() : $tracer->newChild($parentId);
             $span->setName($measure['label']);
+            if (!empty($measure['memory'])) {
+                $span->tag('memory.usage', $measure['memory']['memory_usage_str']);
+            }
+            if (!empty($measure['collector']) && $measure['collector'] == CollectorEnum::DB) {
+                $__query = $measure['params']['__query'];
+                $span->tag('db.type', $__query['type']);
+                $span->tag('db.sql', $__query['real_sql']);
+                $span->tag('db.connection', $__query['connection']);
+                $span->tag('db.driver', $__query['driver']);
+            }
             $span->start(intval($measure['start'] * 1000000));
 
             if (!empty($measure['children'])) {

@@ -2,7 +2,9 @@
 
 namespace Luminee\Tracing;
 
+use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Support\ServiceProvider;
+use Luminee\Tracing\Middlewares\TraceRequests;
 
 class TracingServiceProvider extends ServiceProvider
 {
@@ -18,6 +20,8 @@ class TracingServiceProvider extends ServiceProvider
                 __DIR__ . '/../config/tracing.php' => config_path('tracing.php'),
             ]);
         }
+
+        $this->app[Kernel::class]->pushMiddleware(TraceRequests::class);
     }
 
     /**
